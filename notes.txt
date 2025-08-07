@@ -1,0 +1,1 @@
+Add implementation of more sampling methods apart from greeedy and top p
