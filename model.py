@@ -65,7 +65,7 @@ def precompute_theta_pos_frequencies(head_dim: int, seq_len: int, device: str, t
 def apply_rotary_embeddings(x: torch.Tensor, freqs_complex: torch.Tensor, device: str):
     # Separate the last dimension pairs of two values, representing the real and imaginary parts of the complex number
     # Two consecutive values will become a single complex number
-    # (B, Seq_Len, H, Head_Dim) -> (B, Seq_Len, H, Head_Dim/2)
+    # (B, Seq_Len, H, Head_Dim) -> (B, Seq_Len, H, Head_Dim/2, 2)
     x_complex = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
     # Reshape the freqs_complex tensor to match the shape of the x_complex tensor. So we need to add the batch dimension and the head dimension
     # (Seq_Len, Head_Dim/2) --> (1, Seq_Len, 1, Head_Dim/2)
