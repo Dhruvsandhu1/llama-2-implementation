@@ -1,6 +1,7 @@
 from typing import Optional
 import torch
 import time
+import copy
 from pathlib import Path
 import json
 from sentencepiece import SentencePieceProcessor
@@ -59,6 +60,7 @@ class LLaMA:
         print("Using sampling strategy:", sampling_strategy)
         if max_gen_len is None:
             max_gen_len = self.args.max_seq_len - 1
+        # Shape is (Batch,Seq_len)
         prompt_tokens = [self.tokenizer.encode(prompt, out_type=int, add_bos=True, add_eos=False) for prompt in prompts]
         batch_size = len(prompt_tokens)
         assert batch_size <= self.args.max_batch_size, f"batch size must be less than or equal to {self.args.max_batch_size}"
@@ -66,13 +68,12 @@ class LLaMA:
         assert max_prompt_len <= self.args.max_seq_len, f"prompt length must be less than or equal to {self.args.max_seq_len}"
         total_len = min(self.args.max_seq_len, max_gen_len + max_prompt_len)
 
-        # Default: other sampling strategies
         pad_id = self.tokenizer.pad_id()
         tokens = torch.full((batch_size, total_len), pad_id, dtype=torch.long, device=device)
         for k, t in enumerate(prompt_tokens):
             tokens[k, : len(t)] = torch.tensor(t, dtype=torch.long, device=device)
         eos_reached = torch.tensor([False] * batch_size, device=device)
-        prompt_tokens_mask = tokens != pad_id
+        prompt_tokens_mask = tokens != pad_id  # True for Non padding tokens and False for Padding tokens
         cur_iterator = tqdm(range(1, total_len), desc="Generating tokens")
         for cur_pos in cur_iterator:
             with torch.no_grad():
@@ -121,23 +122,13 @@ class LLaMA:
         return next_token
     
     def random_sampling(self, probs):
-        # (B, vocab_size)
-        probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-        # Redistribute the probabilities so that they sum up to 1.
-        probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-        # Sample a token (its index) from the distribution
-        next_token = torch.multinomial(probs_sort, num_samples=1)
-        # Get the token position in the vocabulary corresponding to the sampled index
-        next_token = torch.gather(probs_idx, -1, next_token) 
+        # probs: (B, vocab_size)
+        probs = probs / probs.sum(dim=-1, keepdim=True)  # Ensure normalization
+        next_token = torch.multinomial(probs, num_samples=1)
         return next_token
 
     def greedy(self, probs):
-        # (B, vocab_size)
-        probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-        # Get the token position in the vocabulary corresponding to the sampled index
-        next_token = torch.argmax(probs_sort, dim=-1)
-        next_token = torch.gather(probs_idx, -1, next_token.unsqueeze(-1)).squeeze(-1)
-        return next_token
+        return torch.argmax(probs, dim=-1)
     
     def _sample_top_p(self, probs, p):
         # (B, vocab_size)
@@ -165,7 +156,7 @@ class LLaMA:
         beam_size: number of beams to keep
         Returns: list of (sequence, score) tuples
         """
-        import copy
+        
         device = self.args.device
         input_ids = self.tokenizer.encode(prompt, out_type=int, add_bos=True, add_eos=False)
         input_tensor = torch.tensor(input_ids, dtype=torch.long, device=device).unsqueeze(0)
